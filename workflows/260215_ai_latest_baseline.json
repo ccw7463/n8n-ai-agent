@@ -1,0 +1,552 @@
+{
+  "name": "Threads Auto Publisher - Workflow A (Daily Pipeline)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "trigger-001",
+      "name": "아침 6시 트리거",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-2400, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const feeds = [\n  // 종합 뉴스\n  'https://news.google.com/rss/search?q=artificial+intelligence+OR+LLM+OR+foundation+model&hl=en',\n  'https://news.google.com/rss/search?q=HyperCLOVA+OR+Upstage+OR+KoGPT+OR+EXAON+AI&hl=ko',\n  'https://techcrunch.com/category/artificial-intelligence/feed/',\n  'https://the-decoder.com/feed/',\n  'https://www.marktechpost.com/feed/',\n\n  // AI 기업 공식 블로그 (미국/유럽)\n  'https://openai.com/blog/rss.xml',\n  'https://www.anthropic.com/rss.xml',\n  'https://blog.google/rss',\n  'https://ai.meta.com/blog/rss/',\n  'https://mistral.ai/feed/rss',\n  'https://blogs.nvidia.com/feed/',\n  'https://stability.ai/blog/feed',\n\n  // 중국 AI\n  'https://qwenlm.github.io/feed.xml',\n  'https://github.com/deepseek-ai.atom',\n  'https://github.com/MoonshotAI.atom',\n\n  // 한국 AI\n  'https://github.com/clovaai.atom',\n  'https://github.com/upstage.atom',\n\n  // 개발자 도구/프레임워크\n  'https://huggingface.co/blog/feed.xml',\n  'https://blog.langchain.dev/rss/',\n  'https://blog.llamaindex.ai/feed',\n\n  // 커뮤니티/큐레이션\n  'https://buttondown.email/ainews/rss',\n  'https://www.deeplearning.ai/the-batch/feed/',\n  'https://simonwillison.net/atom/everything/',\n  'https://www.latent.space/feed',\n\n  // 논문\n  'https://rss.arxiv.org/rss/cs.AI',\n  'https://rss.arxiv.org/rss/cs.CL',\n\n  // 자동화 플랫폼\n  'https://blog.n8n.io/rss',\n  'https://zapier.com/blog/feeds/latest/',\n  'https://www.make.com/en/blog/feed',\n  'https://news.google.com/rss/search?q=n8n+OR+Zapier+OR+Make.com+OR+workflow+automation+OR+no-code+automation&hl=en',\n\n  // AI 이미지/비디오 생성\n  'https://news.google.com/rss/search?q=Midjourney+OR+Kling+AI+OR+Hailuo+AI+OR+Higgsfield+OR+Runway+ML+OR+Sora&hl=en',\n\n  // AI 검색/에이전트\n  'https://news.google.com/rss/search?q=Genspark+OR+Perplexity+AI+OR+AI+agent+launch&hl=en'\n];\n\nconst results = [];\n\nfor (const feedUrl of feeds) {\n  try {\n    const response = await this.helpers.httpRequest({\n      method: 'GET',\n      url: feedUrl,\n      headers: { 'User-Agent': 'n8n-news-agent/1.0' },\n      timeout: 10000,\n      returnFullResponse: true,\n      encoding: 'utf-8',\n      json: false\n    });\n\n    const text = typeof response === 'string' ? response : (response.body || '');\n    const items = text.match(/<item[\\s\\S]*?<\\/item>|<entry[\\s\\S]*?<\\/entry>/gi) || [];\n\n    for (const item of items.slice(0, 10)) {\n      const title = (item.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/) || [])[1] || '';\n      const link = (item.match(/<link[^>]*>([\\s\\S]*?)<\\/link>/) || [])[1] ||\n                   (item.match(/<link[^>]*href=\"([^\"]*)\"/) || [])[1] || '';\n      const pubDate = (item.match(/<pubDate>([\\s\\S]*?)<\\/pubDate>|<published>([\\s\\S]*?)<\\/published>|<updated>([\\s\\S]*?)<\\/updated>/) || [])[1] || '';\n      const desc = (item.match(/<description[^>]*>([\\s\\S]*?)<\\/description>|<summary[^>]*>([\\s\\S]*?)<\\/summary>/) || [])[1] || '';\n\n      const cleanTitle = title.replace(/<!\\[CDATA\\[|\\]\\]>/g, '').replace(/<[^>]*>/g, '').trim();\n      const cleanDesc = desc.replace(/<!\\[CDATA\\[|\\]\\]>/g, '').replace(/<[^>]*>/g, '').trim();\n      const cleanLink = link.replace(/<!\\[CDATA\\[|\\]\\]>/g, '').replace(/<[^>]*>/g, '').trim();\n\n      if (cleanTitle) {\n        results.push({\n          json: {\n            title: cleanTitle,\n            link: cleanLink,\n            source: feedUrl.split('/')[2],\n            published: pubDate.replace(/<!\\[CDATA\\[|\\]\\]>/g, '').trim(),\n            snippet: cleanDesc.slice(0, 500)\n          }\n        });\n      }\n    }\n  } catch (e) {\n    continue;\n  }\n}\n\n// Tavily API 검색 추가\nconst tavilyQueries = [\n  'new AI model release today',\n  'LLM framework tool update',\n  'AI demo launch new feature',\n  'Midjourney Kling Hailuo Runway AI video image update'\n];\n\nfor (const query of tavilyQueries) {\n  try {\n    const tavilyResponse = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://api.tavily.com/search',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({\n        api_key: $env.TAVILY_API_KEY,\n        query: query,\n        days: 1,\n        max_results: 5\n      }),\n      timeout: 10000\n    });\n\n    const parsed = typeof tavilyResponse === 'string'\n      ? JSON.parse(tavilyResponse)\n      : tavilyResponse;\n\n    for (const item of (parsed.results || [])) {\n      results.push({\n        json: {\n          title: item.title || '',\n          link: item.url || '',\n          source: 'tavily',\n          published: '',\n          snippet: (item.content || '').slice(0, 500)\n        }\n      });\n    }\n  } catch (e) {\n    continue;\n  }\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2100, 300],
+      "id": "rss-001",
+      "name": "RSS + Tavily 수집"
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\nconst seen = new Set();\nconst filtered = [];\n\nfor (const item of allItems) {\n  const title = (item.json.title || '').trim();\n  const link = item.json.link || item.json.url || item.json.guid || '';\n  if (!title) continue;\n\n  const key = title.toLowerCase().replace(/[^a-z0-9가-힣]/g, '').slice(0, 60);\n\n  if (seen.has(key)) continue;\n  seen.add(key);\n\n  // 24시간 이내 기사만\n  const pubDate = item.json.published || '';\n  if (pubDate) {\n    const articleDate = new Date(pubDate);\n    const now = new Date();\n    const hoursDiff = (now - articleDate) / (1000 * 60 * 60);\n    if (hoursDiff > 24) continue;\n  }\n\n  filtered.push({\n    json: {\n      title: title,\n      link: link,\n      source: item.json.source || 'unknown',\n      published: pubDate,\n      snippet: (item.json.snippet || '').slice(0, 500)\n    }\n  });\n}\n\nreturn filtered;"
+      },
+      "id": "dedup-001",
+      "name": "중복제거 & 24h 필터",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1800, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const articles = $input.all().map(item => item.json);\n\nconst articleList = articles.map((a, i) =>\n  `[${i+1}] ${a.title} (${a.source})\\n    Link: ${a.link}\\n    Snippet: ${a.snippet}`\n).join('\\n\\n');\n\nconst prompt = `당신은 AI 뉴스 필터링 전문가입니다.\n아래 기사 목록에서 기준에 맞는 기사를 선별하세요.\n\n[포함 기준]\n- 새로운 AI 모델 출시/릴리즈\n- 새로운 AI 도구/서비스 출시 및 업데이트\n- 새로운 기술 데모\n- API 변경/신규 공개\n- 주요 오픈소스 프로젝트 릴리즈\n- 벤치마크 결과, 주요 논문\n- AI 생성 도구 업데이트 (텍스트/이미지/음성/비디오)\n- 자동화 도구 (n8n, Make, Zapier) 업데이트\n- 바이브코딩, 노코드/로우코드 AI 관련 소식\n\n[제외 기준]\n- 법/규제/정책, 정치\n- 투자/펀딩/IPO, 인사이동\n- 윤리/철학적 논의\n- 단순 산업 전망/의견/마케팅성 기사\n\n[중복 제거 규칙 - 매우 중요]\n- 같은 사건/발표/릴리즈를 다루는 기사가 여러 개면 가장 원본에 가까운 소스 1개만 선택\n- 우선순위: 공식 블로그/릴리즈 노트 > 전문 AI 매체 > 일반 테크 매체 > 뉴스 매체\n- 예: OpenAI 블로그 vs TechCrunch가 같은 뉴스를 다루면 OpenAI 블로그만 선택\n\n기사 목록:\n${articleList}\n\n반드시 아래 JSON 형식으로만 응답하세요. JSON 외의 텍스트는 절대 포함하지 마세요:\n{\n  \"selected\": [\n    { \"index\": 1, \"reason\": \"선택 이유 한 줄\" }\n  ]\n}\n\n최대 15개까지 선별하세요. 의미적으로 중복되는 기사는 반드시 1개만 남기세요.`;\n\nreturn [{ json: { prompt, articles } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1500, 300],
+      "id": "filter-prompt-001",
+      "name": "1차 필터 프롬프트"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'openai/gpt-4.1-mini', messages: [{ role: 'system', content: 'AI 뉴스 필터링 전문가. 반드시 요청된 JSON 형식으로만 응답하라. JSON 외의 텍스트는 절대 포함하지 마라.' }, { role: 'user', content: $json.prompt }], temperature: 0.2, max_tokens: 2000 }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "llm-filter-001",
+      "name": "1차 필터 LLM (GPT-4.1-mini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-1200, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cjRbZ8vwW17VCUpg",
+          "name": "Openrouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const llmResponse = $input.first().json.choices?.[0]?.message?.content || '';\n\n// JSON 파싱\nlet jsonStr = llmResponse;\nconst jsonMatch = llmResponse.match(/```json\\s*([\\s\\S]*?)\\s*```/);\nif (jsonMatch) jsonStr = jsonMatch[1];\nconst plainMatch = jsonStr.match(/```\\s*([\\s\\S]*?)\\s*```/);\nif (plainMatch) jsonStr = plainMatch[1];\n\nlet selected = [];\ntry {\n  const parsed = JSON.parse(jsonStr.trim());\n  selected = parsed.selected || [];\n} catch (e) {\n  // fallback: 숫자 추출\n  const matches = llmResponse.match(/\\d+/g) || [];\n  selected = matches.map(m => ({ index: parseInt(m, 10) }));\n}\n\n// 원본 기사 배열 가져오기\nconst articles = $('1차 필터 프롬프트').first().json.articles || [];\n\nconst results = [];\nfor (const item of selected) {\n  const idx = item.index - 1;\n  if (idx >= 0 && idx < articles.length) {\n    results.push({\n      json: {\n        ...articles[idx],\n        filter_reason: item.reason || ''\n      }\n    });\n  }\n}\n\nreturn results.length > 0\n  ? results.slice(0, 15)\n  : [{ json: { title: 'No articles selected', skip: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-900, 300],
+      "id": "filter-parse-001",
+      "name": "1차 필터 결과 파싱"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 각 기사에 대해 Perplexity 조사용 프롬프트 생성\nconst item = $input.first().json;\n\nif (item.skip) return [{ json: { skip: true } }];\n\nconst prompt = `아래 AI 관련 기사에 대해 심층 조사를 해주세요.\n\n기사 제목: ${item.title}\n기사 링크: ${item.link}\n기사 출처: ${item.source}\n기사 스니펫: ${item.snippet}\n\n다음을 조사해서 반드시 JSON으로만 응답해주세요:\n{\n  \"official_source\": \"공식 블로그/릴리즈 노트/GitHub 등 1차 소스 URL (못 찾으면 null)\",\n  \"verified\": true 또는 false,\n  \"key_facts\": [\"핵심 사실 1\", \"핵심 사실 2\", \"핵심 사실 3\"],\n  \"corrections\": \"기사와 다른 점이 있으면 기술, 없으면 null\",\n  \"tech_details\": \"기술적 핵심 내용 요약 (3~5문장, 한국어)\",\n  \"significance\": \"왜 중요한지 한 줄 평가 (한국어)\",\n  \"related_tools\": [\"관련 도구/서비스명\"]\n}\n\nJSON 외의 텍스트는 절대 포함하지 마세요.`;\n\nreturn [{ json: { prompt, original: item } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-600, 300],
+      "id": "perplexity-prompt-001",
+      "name": "Perplexity 조사 프롬프트"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'perplexity/sonar', messages: [{ role: 'system', content: 'AI 기술 뉴스 팩트체커. 반드시 요청된 JSON 형식으로만 응답하라.' }, { role: 'user', content: $json.prompt }], temperature: 0.1, max_tokens: 2000 }) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "perplexity-001",
+      "name": "Perplexity Sonar 조사",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-300, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cjRbZ8vwW17VCUpg",
+          "name": "Openrouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst original = $('Perplexity 조사 프롬프트').first().json.original;\n\nlet content = '';\ntry {\n  content = response.choices[0].message.content;\n} catch (e) {\n  return [{ json: { ...original, research: null, research_error: 'LLM 응답 없음' } }];\n}\n\n// JSON 파싱\nlet jsonStr = content;\nconst jsonMatch = content.match(/```json\\s*([\\s\\S]*?)\\s*```/);\nif (jsonMatch) jsonStr = jsonMatch[1];\nconst plainMatch = jsonStr.match(/```\\s*([\\s\\S]*?)\\s*```/);\nif (plainMatch) jsonStr = plainMatch[1];\n\ntry {\n  const research = JSON.parse(jsonStr.trim());\n  return [{ json: { ...original, research } }];\n} catch (e) {\n  return [{ json: { ...original, research: null, research_error: content.slice(0, 500) } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "id": "perplexity-parse-001",
+      "name": "Perplexity 결과 병합"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(item => item.json);\nconst validItems = items.filter(i => !i.skip && i.title !== 'No articles selected');\n\nconst today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });\n\nconst articleList = validItems.map((a, i) => {\n  const r = a.research || {};\n  return `[${i+1}] 제목: ${a.title}\n  출처: ${a.source}\n  링크: ${a.link}\n  공식소스: ${r.official_source || 'N/A'}\n  검증여부: ${r.verified !== undefined ? r.verified : 'N/A'}\n  핵심사실: ${(r.key_facts || []).join(' / ')}\n  기술상세: ${r.tech_details || a.snippet}\n  중요도: ${r.significance || 'N/A'}\n  수정사항: ${r.corrections || '없음'}`;\n}).join('\\n\\n');\n\nconst prompt = `오늘은 ${today}입니다.\n\n당신은 AI 뉴스 큐레이터입니다. 아래는 팩트체크를 거친 기사 목록입니다.\n\n${articleList}\n\n[작업 1: 전체 요약/분류]\n모든 기사를 요약하고 분류하세요.\n\n[독자 레벨 분류 기준]\n- general: 일반인도 흥미를 가질만한 소식. ChatGPT, Claude, Midjourney, Suno, Kling 같은 누구나 쓸 수 있는 AI 서비스/도구의 신규 출시, 업데이트, 데모. 바이브코딩, 노코드 AI. 코딩 지식 없이도 이해 가능한 내용.\n- intermediate: AI에 관심 많고 n8n, Make 같은 자동화 도구를 활용하는 사람이 관심가질 소식.\n- developer: AI 엔지니어/개발자 대상. 새 모델 아키텍처, 학습 기법, 프레임워크, 벤치마크, 논문 등.\n\n[작업 2: 쓰레드 8개 선정]\n위 기사 중 쓰레드(Threads) SNS에 올리기 좋은 기사 8개를 선정하세요.\n선정 기준:\n- 대중의 관심을 끌 수 있는 주제 우선\n- general과 developer 콘텐츠를 적절히 섞을 것 (general 5개, developer 3개 정도)\n- 팩트체크에서 verified: false인 기사는 제외\n\n반드시 아래 JSON 형식으로만 응답하세요:\n{\n  \"all_stories\": [\n    {\n      \"title\": \"기사 제목\",\n      \"summary\": \"한국어 2~3문장 요약\",\n      \"audience\": \"general | intermediate | developer\",\n      \"category\": \"model_release | tool_update | demo | paper | benchmark | api_change | opensource | creative_ai | automation | vibe_coding | other\",\n      \"link\": \"원문 링크\",\n      \"official_source\": \"공식 소스 링크\",\n      \"key_facts\": [\"핵심 사실들\"],\n      \"tech_details\": \"기술 상세\"\n    }\n  ],\n  \"thread_picks\": [1, 3, 5, 7, 8, 10, 12, 14],\n  \"daily_digest\": \"오늘의 AI 뉴스 핵심 요약 (한국어, 3~5문장)\"\n}`;\n\nreturn [{ json: { prompt, articleCount: validItems.length, articles: validItems } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 300],
+      "id": "summary-prompt-001",
+      "name": "2차 요약/분류 프롬프트"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'openai/gpt-4.1-mini', messages: [{ role: 'system', content: 'AI 뉴스 큐레이터. 반드시 요청된 JSON 형식으로만 응답하라.' }, { role: 'user', content: $json.prompt }], temperature: 0.3, max_tokens: 4000 }) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "llm-summary-001",
+      "name": "2차 요약 LLM (GPT-4.1-mini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cjRbZ8vwW17VCUpg",
+          "name": "Openrouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nlet content = '';\n\ntry {\n  content = response.choices[0].message.content;\n} catch (e) {\n  throw new Error('2차 LLM 응답 파싱 실패: ' + JSON.stringify(response).slice(0, 500));\n}\n\nlet jsonStr = content;\nconst jsonMatch = content.match(/```json\\s*([\\s\\S]*?)\\s*```/);\nif (jsonMatch) jsonStr = jsonMatch[1];\nconst plainMatch = jsonStr.match(/```\\s*([\\s\\S]*?)\\s*```/);\nif (plainMatch) jsonStr = plainMatch[1];\n\ntry {\n  const parsed = JSON.parse(jsonStr.trim());\n  return [{ json: parsed }];\n} catch (e) {\n  throw new Error('2차 JSON 파싱 실패. 원본: ' + content.slice(0, 1000));\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "id": "summary-parse-001",
+      "name": "2차 요약 결과 파싱"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst allStories = data.all_stories || [];\nconst threadPicks = data.thread_picks || [];\n\n// thread_picks에 해당하는 기사만 추출\nconst threadStories = threadPicks\n  .map(idx => allStories[idx - 1])\n  .filter(s => s !== undefined)\n  .slice(0, 8);\n\nreturn threadStories.map((story, i) => ({\n  json: {\n    ...story,\n    thread_index: i + 1,\n    total_threads: threadStories.length\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 500],
+      "id": "thread-select-001",
+      "name": "쓰레드 8개 선정"
+    },
+    {
+      "parameters": {
+        "jsCode": "const story = $input.first().json;\n\nconst prompt = `당신은 쓰레드(Threads) SNS 전문 카피라이터입니다.\n아래 기사 정보를 바탕으로 쓰레드 게시물 초안을 작성하세요.\n\n[기사 정보]\n제목: ${story.title}\n요약: ${story.summary}\n타겟: ${story.audience}\n카테고리: ${story.category}\n공식소스: ${story.official_source || story.link}\n핵심사실: ${(story.key_facts || []).join(', ')}\n기술상세: ${story.tech_details || ''}\n\n[작성 규칙]\n1. 톤: 캐주얼하고 친근하게. \"~입니다\" 보다 \"~거든요\", \"~이에요\", \"~인데요\" 사용\n2. 첫 줄은 반드시 스크롤을 멈추게 하는 훅으로 시작 (질문, 반전, 강한 주장)\n3. 이모지 적절히 사용 (과하지 않게, 2~4개)\n4. 전체 길이: 300~500자\n5. 마지막에 공식 소스 링크 포함\n6. AI 개발자의 관점에서 본인 의견/인사이트 한 줄 반드시 포함\n7. 해시태그 2~3개 (마지막 줄)\n\n[톤 예시]\n- \"솔직히 이번엔 좀 다릅니다 🔥\"\n- \"이거 모르면 진짜 손해예요\"\n- \"개발자 입장에서 보면, 진짜 바뀐 건 딱 하나입니다\"\n\n[audience별 톤 조절]\n- general: 비개발자도 이해할 수 있게 쉽고 흥미롭게\n- intermediate: 실용적 활용법 중심\n- developer: 기술적 디테일 포함, 개발자 공감 요소\n\n반드시 아래 JSON으로만 응답하세요:\n{\n  \"thread_text\": \"쓰레드 게시물 전문\",\n  \"hook_line\": \"첫 줄 훅만 따로\",\n  \"content_type\": \"속보 | 리뷰 | 팁 | 비교 | 의견\"\n}`;\n\nreturn [{ json: { prompt, story } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 500],
+      "id": "thread-draft-prompt-001",
+      "name": "쓰레드 초안 프롬프트"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'openai/gpt-4.1-mini', messages: [{ role: 'system', content: '쓰레드 SNS 전문 카피라이터. 반드시 요청된 JSON으로만 응답하라.' }, { role: 'user', content: $json.prompt }], temperature: 0.7, max_tokens: 1500 }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "llm-draft-001",
+      "name": "초안 생성 LLM (GPT-4.1-mini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 500],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cjRbZ8vwW17VCUpg",
+          "name": "Openrouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst story = $('쓰레드 초안 프롬프트').first().json.story;\n\nlet content = '';\ntry {\n  content = response.choices[0].message.content;\n} catch (e) {\n  return [{ json: { ...story, thread_text: '초안 생성 실패', error: true } }];\n}\n\nlet jsonStr = content;\nconst jsonMatch = content.match(/```json\\s*([\\s\\S]*?)\\s*```/);\nif (jsonMatch) jsonStr = jsonMatch[1];\nconst plainMatch = jsonStr.match(/```\\s*([\\s\\S]*?)\\s*```/);\nif (plainMatch) jsonStr = plainMatch[1];\n\ntry {\n  const draft = JSON.parse(jsonStr.trim());\n  const today = new Date().toISOString().split('T')[0];\n  const draftId = `draft_${today}_${story.thread_index}`;\n\n  return [{\n    json: {\n      draft_id: draftId,\n      title: story.title,\n      summary: story.summary,\n      audience: story.audience,\n      category: story.category,\n      link: story.link,\n      official_source: story.official_source || story.link,\n      key_facts: story.key_facts || [],\n      tech_details: story.tech_details || '',\n      thread_text: draft.thread_text,\n      hook_line: draft.hook_line,\n      content_type: draft.content_type,\n      thread_index: story.thread_index,\n      total_threads: story.total_threads,\n      status: 'draft',\n      date: today\n    }\n  }];\n} catch (e) {\n  return [{ json: { ...story, thread_text: content.slice(0, 500), error: true } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2100, 500],
+      "id": "draft-parse-001",
+      "name": "초안 파싱 & 병합"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "YOUR_NOTION_DB_ID_HERE",
+          "mode": "id"
+        },
+        "title": "={{ $json.title }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Summary|rich_text",
+              "textContent": "={{ $json.summary }}"
+            },
+            {
+              "key": "Category|select",
+              "selectValue": "={{ $json.category }}"
+            },
+            {
+              "key": "Link|url",
+              "urlValue": "={{ $json.link }}"
+            },
+            {
+              "key": "Date|date",
+              "date": "={{ $json.date }}"
+            },
+            {
+              "key": "Audience|select",
+              "selectValue": "={{ $json.audience }}"
+            },
+            {
+              "key": "OfficialSource|url",
+              "urlValue": "={{ $json.official_source }}"
+            },
+            {
+              "key": "ThreadDraft|rich_text",
+              "textContent": "={{ $json.thread_text }}"
+            },
+            {
+              "key": "DraftID|rich_text",
+              "textContent": "={{ $json.draft_id }}"
+            },
+            {
+              "key": "Status|select",
+              "selectValue": "draft"
+            },
+            {
+              "key": "ContentType|select",
+              "selectValue": "={{ $json.content_type }}"
+            },
+            {
+              "key": "TechDetails|rich_text",
+              "textContent": "={{ $json.tech_details }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-save-001",
+      "name": "Notion 저장 (draft)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [2400, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "3HIEQPfhjW2SIyxD",
+          "name": "Notion"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst draft = $('초안 파싱 & 병합').first().json;\n\n// Notion 저장 후 반환된 page ID 가져오기\nconst notionPageId = item.id || '';\n\nconst categoryEmoji = {\n  model_release: '🚀', tool_update: '🔧', demo: '🎬', paper: '📄',\n  benchmark: '📊', api_change: '🔌', opensource: '💻', creative_ai: '🎨',\n  automation: '⚙️', vibe_coding: '🎸', other: '📌'\n};\n\nconst audienceBadge = {\n  general: '👥 일반', intermediate: '⚡ 중간', developer: '🛠️ 개발자'\n};\n\nconst emoji = categoryEmoji[draft.category] || '📌';\nconst badge = audienceBadge[draft.audience] || '📌';\n\nconst slackBlocks = [\n  {\n    type: 'header',\n    text: {\n      type: 'plain_text',\n      text: `🤖 쓰레드 초안 [${draft.thread_index}/${draft.total_threads}]`\n    }\n  },\n  {\n    type: 'context',\n    elements: [\n      { type: 'mrkdwn', text: `${badge} | ${emoji} ${draft.category} | ${draft.content_type}` }\n    ]\n  },\n  { type: 'divider' },\n  {\n    type: 'section',\n    text: {\n      type: 'mrkdwn',\n      text: draft.thread_text\n    }\n  },\n  { type: 'divider' },\n  {\n    type: 'context',\n    elements: [\n      { type: 'mrkdwn', text: `📎 *원문:* <${draft.link}|링크> | 🔗 *공식:* <${draft.official_source || draft.link}|링크>` }\n    ]\n  },\n  {\n    type: 'actions',\n    block_id: `approve_row1_${draft.draft_id}`,\n    elements: [\n      { type: 'button', text: { type: 'plain_text', text: '✅ 즉시' }, action_id: `approve_now_${draft.draft_id}`, value: JSON.stringify({ draft_id: draft.draft_id, notion_page_id: notionPageId, time: 'now' }), style: 'primary' },\n      { type: 'button', text: { type: 'plain_text', text: '✅ 8시' }, action_id: `approve_08_${draft.draft_id}`, value: JSON.stringify({ draft_id: draft.draft_id, notion_page_id: notionPageId, time: '08:00' }) },\n      { type: 'button', text: { type: 'plain_text', text: '✅ 10시' }, action_id: `approve_10_${draft.draft_id}`, value: JSON.stringify({ draft_id: draft.draft_id, notion_page_id: notionPageId, time: '10:00' }) },\n      { type: 'button', text: { type: 'plain_text', text: '✅ 12시' }, action_id: `approve_12_${draft.draft_id}`, value: JSON.stringify({ draft_id: draft.draft_id, notion_page_id: notionPageId, time: '12:00' }) },\n      { type: 'button', text: { type: 'plain_text', text: '✅ 14시' }, action_id: `approve_14_${draft.draft_id}`, value: JSON.stringify({ draft_id: draft.draft_id, notion_page_id: notionPageId, time: '14:00' }) }\n    ]\n  },\n  {\n    type: 'actions',\n    block_id: `approve_row2_${draft.draft_id}`,\n    elements: [\n      { type: 'button', text: { type: 'plain_text', text: '✅ 16시' }, action_id: `approve_16_${draft.draft_id}`, value: JSON.stringify({ draft_id: draft.draft_id, notion_page_id: notionPageId, time: '16:00' }) },\n      { type: 'button', text: { type: 'plain_text', text: '✅ 18시' }, action_id: `approve_18_${draft.draft_id}`, value: JSON.stringify({ draft_id: draft.draft_id, notion_page_id: notionPageId, time: '18:00' }) },\n      { type: 'button', text: { type: 'plain_text', text: '✅ 20시' }, action_id: `approve_20_${draft.draft_id}`, value: JSON.stringify({ draft_id: draft.draft_id, notion_page_id: notionPageId, time: '20:00' }) },\n      { type: 'button', text: { type: 'plain_text', text: '✅ 22시' }, action_id: `approve_22_${draft.draft_id}`, value: JSON.stringify({ draft_id: draft.draft_id, notion_page_id: notionPageId, time: '22:00' }) },\n      { type: 'button', text: { type: 'plain_text', text: '❌ 반려' }, action_id: `reject_${draft.draft_id}`, value: JSON.stringify({ draft_id: draft.draft_id, notion_page_id: notionPageId, time: 'reject' }), style: 'danger' }\n    ]\n  },\n  {\n    type: 'context',\n    elements: [\n      { type: 'mrkdwn', text: '💬 이 메시지에 스레드로 피드백을 남기면 수정본을 만들어드려요' }\n    ]\n  }\n];\n\nreturn [{ json: { blocks: JSON.stringify(slackBlocks), draft_id: draft.draft_id, channel: 'thread-bot' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2700, 300],
+      "id": "slack-format-001",
+      "name": "슬랙 메시지 포맷"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "channel": {
+          "__rl": true,
+          "value": "YOUR_SLACK_CHANNEL_ID_HERE",
+          "mode": "id"
+        },
+        "blocksUi": "={{ $json.blocks }}",
+        "text": "쓰레드 초안이 도착했어요!",
+        "options": {}
+      },
+      "id": "slack-send-001",
+      "name": "슬랙 전송",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [3000, 300],
+      "credentials": {
+        "slackApi": {
+          "id": "YOUR_SLACK_CREDENTIAL_ID",
+          "name": "Slack"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('2차 요약 결과 파싱').first().json;\nconst stories = data.all_stories || [];\nconst today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });\n\nconst categoryEmoji = {\n  model_release: '🚀', tool_update: '🔧', demo: '🎬', paper: '📄',\n  benchmark: '📊', api_change: '🔌', opensource: '💻', creative_ai: '🎨',\n  automation: '⚙️', vibe_coding: '🎸', other: '📌'\n};\n\nconst audienceBadge = { general: '👥 일반', intermediate: '⚡ 중간', developer: '🛠️ 개발자' };\nconst audienceColor = { general: '#10b981', intermediate: '#f59e0b', developer: '#6366f1' };\n\nlet html = `<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 700px; margin: 0 auto; padding: 20px;\">\n  <div style=\"background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 12px; margin-bottom: 24px;\">\n    <h1 style=\"margin: 0; font-size: 24px;\">🤖 AI Daily Briefing</h1>\n    <p style=\"margin: 8px 0 0 0; opacity: 0.9;\">${today}</p>\n  </div>\n  <div style=\"background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 24px; border-left: 4px solid #667eea;\">\n    <h3 style=\"margin: 0 0 8px 0; color: #333;\">📋 오늘의 요약</h3>\n    <p style=\"margin: 0; color: #555; line-height: 1.6;\">${data.daily_digest || 'N/A'}</p>\n  </div>\n  <h2 style=\"color: #333; border-bottom: 2px solid #eee; padding-bottom: 8px;\">주요 뉴스 (${stories.length}건)</h2>`;\n\nfor (const story of stories) {\n  const emoji = categoryEmoji[story.category] || '📌';\n  const badge = audienceBadge[story.audience] || '📌';\n  const color = audienceColor[story.audience] || '#888';\n  html += `<div style=\"background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 12px;\">\n    <div style=\"margin-bottom: 8px;\"><span style=\"font-size: 12px; background: ${color}; color: white; padding: 2px 8px; border-radius: 12px;\">${badge}</span> <span style=\"font-size: 12px; color: #888;\">${emoji} ${story.category || ''}</span></div>\n    <h3 style=\"margin: 0 0 8px 0; font-size: 16px;\"><a href=\"${story.link}\" style=\"color: #2d3748; text-decoration: none;\">${story.title}</a></h3>\n    <p style=\"margin: 0; color: #666; font-size: 14px; line-height: 1.5;\">${story.summary}</p>\n  </div>`;\n}\n\nhtml += `<div style=\"text-align: center; padding: 20px; color: #aaa; font-size: 12px;\">Powered by n8n + OpenRouter | AI Daily News Agent v2</div></div>`;\n\nconst hour = new Date().getHours();\nconst timeSlot = hour < 9 ? '🌅 모닝' : hour < 15 ? '☀️ 점심' : '🌆 저녁';\nconst subject = `[AI Daily] ${today} ${timeSlot} 브리핑 (${stories.length}건)`;\n\nreturn [{ json: { html, subject, storyCount: stories.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 100],
+      "id": "email-html-001",
+      "name": "Gmail HTML 생성"
+    },
+    {
+      "parameters": {
+        "fromEmail": "changwoo7463@gmail.com",
+        "toEmail": "changwoo7463@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.html }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1500, 100],
+      "id": "email-send-001",
+      "name": "이메일 발송",
+      "credentials": {
+        "smtp": {
+          "id": "vcpYCmulz103zq0E",
+          "name": "SMTP account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "아침 6시 트리거": {
+      "main": [
+        [
+          { "node": "RSS + Tavily 수집", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "RSS + Tavily 수집": {
+      "main": [
+        [
+          { "node": "중복제거 & 24h 필터", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "중복제거 & 24h 필터": {
+      "main": [
+        [
+          { "node": "1차 필터 프롬프트", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "1차 필터 프롬프트": {
+      "main": [
+        [
+          { "node": "1차 필터 LLM (GPT-4.1-mini)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "1차 필터 LLM (GPT-4.1-mini)": {
+      "main": [
+        [
+          { "node": "1차 필터 결과 파싱", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "1차 필터 결과 파싱": {
+      "main": [
+        [
+          { "node": "Perplexity 조사 프롬프트", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Perplexity 조사 프롬프트": {
+      "main": [
+        [
+          { "node": "Perplexity Sonar 조사", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Perplexity Sonar 조사": {
+      "main": [
+        [
+          { "node": "Perplexity 결과 병합", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Perplexity 결과 병합": {
+      "main": [
+        [
+          { "node": "2차 요약/분류 프롬프트", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "2차 요약/분류 프롬프트": {
+      "main": [
+        [
+          { "node": "2차 요약 LLM (GPT-4.1-mini)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "2차 요약 LLM (GPT-4.1-mini)": {
+      "main": [
+        [
+          { "node": "2차 요약 결과 파싱", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "2차 요약 결과 파싱": {
+      "main": [
+        [
+          { "node": "쓰레드 8개 선정", "type": "main", "index": 0 },
+          { "node": "Gmail HTML 생성", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "쓰레드 8개 선정": {
+      "main": [
+        [
+          { "node": "쓰레드 초안 프롬프트", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "쓰레드 초안 프롬프트": {
+      "main": [
+        [
+          { "node": "초안 생성 LLM (GPT-4.1-mini)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "초안 생성 LLM (GPT-4.1-mini)": {
+      "main": [
+        [
+          { "node": "초안 파싱 & 병합", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "초안 파싱 & 병합": {
+      "main": [
+        [
+          { "node": "Notion 저장 (draft)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Notion 저장 (draft)": {
+      "main": [
+        [
+          { "node": "슬랙 메시지 포맷", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "슬랙 메시지 포맷": {
+      "main": [
+        [
+          { "node": "슬랙 전송", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Gmail HTML 생성": {
+      "main": [
+        [
+          { "node": "이메일 발송", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    { "name": "threads-auto-publisher" },
+    { "name": "ai-news" }
+  ]
+}

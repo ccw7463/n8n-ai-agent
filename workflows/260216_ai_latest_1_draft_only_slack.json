@@ -1,0 +1,412 @@
+{
+  "name": "AI Latest only briefing in slack",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const feeds = [\n  // 종합 뉴스\n  'https://news.google.com/rss/search?q=artificial+intelligence+OR+LLM+OR+foundation+model&hl=en',\n  'https://news.google.com/rss/search?q=HyperCLOVA+OR+Upstage+OR+KoGPT+OR+EXAON+AI&hl=ko',\n  'https://techcrunch.com/category/artificial-intelligence/feed/',\n  'https://the-decoder.com/feed/',\n  'https://www.marktechpost.com/feed/',\n\n  // AI 기업 공식 블로그 (미국/유럽)\n  'https://openai.com/blog/rss.xml',\n  'https://www.anthropic.com/rss.xml',\n  'https://blog.google/rss',\n  'https://ai.meta.com/blog/rss/',\n  'https://mistral.ai/feed/rss',\n  'https://blogs.nvidia.com/feed/',\n  'https://stability.ai/blog/feed',\n\n  // 중국 AI\n  'https://qwenlm.github.io/feed.xml',\n  'https://github.com/deepseek-ai.atom',\n  'https://github.com/MoonshotAI.atom',\n\n  // 한국 AI\n  'https://github.com/clovaai.atom',\n  'https://github.com/upstage.atom',\n\n  // 개발자 도구/프레임워크\n  'https://huggingface.co/blog/feed.xml',\n  'https://blog.langchain.dev/rss/',\n  'https://blog.llamaindex.ai/feed',\n\n  // 커뮤니티/큐레이션\n  'https://buttondown.email/ainews/rss',\n  'https://www.deeplearning.ai/the-batch/feed/',\n  'https://simonwillison.net/atom/everything/',\n  'https://www.latent.space/feed',\n\n  // 논문\n  'https://rss.arxiv.org/rss/cs.AI',\n  'https://rss.arxiv.org/rss/cs.CL',\n\n  // 자동화 플랫폼\n  'https://blog.n8n.io/rss',\n  'https://zapier.com/blog/feeds/latest/',\n  'https://www.make.com/en/blog/feed',\n  'https://news.google.com/rss/search?q=n8n+OR+Zapier+OR+Make.com+OR+workflow+automation+OR+no-code+automation&hl=en',\n\n  // AI 이미지/비디오 생성\n  'https://news.google.com/rss/search?q=Midjourney+OR+Kling+AI+OR+Hailuo+AI+OR+Higgsfield+OR+Runway+ML+OR+Sora&hl=en',\n\n  // AI 검색/에이전트\n  'https://news.google.com/rss/search?q=Genspark+OR+Perplexity+AI+OR+AI+agent+launch&hl=en'\n];\n\nconst results = [];\n\nfor (const feedUrl of feeds) {\n  try {\n    const response = await this.helpers.httpRequest({\n      method: 'GET',\n      url: feedUrl,\n      headers: { 'User-Agent': 'n8n-news-agent/1.0' },\n      timeout: 10000,\n      returnFullResponse: true,\n      encoding: 'utf-8',\n      json: false\n    });\n\n    const text = typeof response === 'string' ? response : (response.body || '');\n    const items = text.match(/<item[\\s\\S]*?<\\/item>|<entry[\\s\\S]*?<\\/entry>/gi) || [];\n\n    for (const item of items.slice(0, 10)) {\n      const title = (item.match(/<title[^>]*>([\\s\\S]*?)<\\/title>/) || [])[1] || '';\n      const link = (item.match(/<link[^>]*>([\\s\\S]*?)<\\/link>/) || [])[1] ||\n                   (item.match(/<link[^>]*href=\"([^\"]*)\"/) || [])[1] || '';\n      const pubDate = (item.match(/<pubDate>([\\s\\S]*?)<\\/pubDate>|<published>([\\s\\S]*?)<\\/published>|<updated>([\\s\\S]*?)<\\/updated>/) || [])[1] || '';\n      const desc = (item.match(/<description[^>]*>([\\s\\S]*?)<\\/description>|<summary[^>]*>([\\s\\S]*?)<\\/summary>/) || [])[1] || '';\n\n      const cleanTitle = title.replace(/<!\\[CDATA\\[|\\]\\]>/g, '').replace(/<[^>]*>/g, '').trim();\n      const cleanDesc = desc.replace(/<!\\[CDATA\\[|\\]\\]>/g, '').replace(/<[^>]*>/g, '').trim();\n      const cleanLink = link.replace(/<!\\[CDATA\\[|\\]\\]>/g, '').replace(/<[^>]*>/g, '').trim();\n\n      if (cleanTitle) {\n        results.push({\n          json: {\n            title: cleanTitle,\n            link: cleanLink,\n            source: feedUrl.split('/')[2],\n            published: pubDate.replace(/<!\\[CDATA\\[|\\]\\]>/g, '').trim(),\n            snippet: cleanDesc.slice(0, 500)\n          }\n        });\n      }\n    }\n  } catch (e) {\n    continue;\n  }\n}\n\n// Tavily API 검색 추가\nconst tavilyQueries = [\n  'new AI model release today',\n  'LLM framework tool update',\n  'AI demo launch new feature',\n  'Midjourney Kling Hailuo Runway AI video image update'\n];\n\nfor (const query of tavilyQueries) {\n  try {\n    const tavilyResponse = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://api.tavily.com/search',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({\n        api_key: $env.TAVILY_API_KEY,\n        query: query,\n        days: 1,\n        max_results: 5\n      }),\n      timeout: 10000\n    });\n\n    const parsed = typeof tavilyResponse === 'string'\n      ? JSON.parse(tavilyResponse)\n      : tavilyResponse;\n\n    for (const item of (parsed.results || [])) {\n      results.push({\n        json: {\n          title: item.title || '',\n          link: item.url || '',\n          source: 'tavily',\n          published: '',\n          snippet: (item.content || '').slice(0, 500)\n        }\n      });\n    }\n  } catch (e) {\n    continue;\n  }\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2400,
+        176
+      ],
+      "id": "b398bd2b-daf8-4b96-b09e-023070b52e6d",
+      "name": "RSS + Tavily 수집"
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\nconst seen = new Set();\nconst filtered = [];\n\nfor (const item of allItems) {\n  const title = (item.json.title || '').trim();\n  const link = item.json.link || item.json.url || item.json.guid || '';\n  if (!title) continue;\n\n  const key = title.toLowerCase().replace(/[^a-z0-9가-힣]/g, '').slice(0, 60);\n\n  if (seen.has(key)) continue;\n  seen.add(key);\n\n  // 24시간 이내 기사만\n  const pubDate = item.json.published || '';\n  if (pubDate) {\n    const articleDate = new Date(pubDate);\n    const now = new Date();\n    const hoursDiff = (now - articleDate) / (1000 * 60 * 60);\n    if (hoursDiff > 24) continue;\n  }\n\n  filtered.push({\n    json: {\n      title: title,\n      link: link,\n      source: item.json.source || 'unknown',\n      published: pubDate,\n      snippet: (item.json.snippet || '').slice(0, 500)\n    }\n  });\n}\n\nreturn filtered;"
+      },
+      "id": "925d1fdb-388e-41cc-8147-eddc2f7a7c16",
+      "name": "중복제거 & 24h 필터",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2112,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const articles = $input.all().map(item => item.json);\n\nconst articleList = articles.map((a, i) =>\n  `[${i+1}] ${a.title} (${a.source})\\n    Link: ${a.link}\\n    Snippet: ${a.snippet}`\n).join('\\n\\n');\n\nconst prompt = `당신은 AI 뉴스 필터링 전문가입니다.\n아래 기사 목록에서 기준에 맞는 기사를 선별하세요.\n\n[포함 기준]\n- 새로운 AI 모델 출시/릴리즈\n- 새로운 AI 도구/서비스 출시 및 업데이트\n- 새로운 기술 데모\n- API 변경/신규 공개\n- 주요 오픈소스 프로젝트 릴리즈\n- 벤치마크 결과, 주요 논문\n- AI 생성 도구 업데이트 (텍스트/이미지/음성/비디오)\n- 자동화 도구 (n8n, Make, Zapier) 업데이트\n- 바이브코딩, 노코드/로우코드 AI 관련 소식\n\n[제외 기준]\n- 법/규제/정책, 정치\n- 투자/펀딩/IPO, 인사이동\n- 윤리/철학적 논의\n- 단순 산업 전망/의견/마케팅성 기사\n\n[중복 제거 규칙 - 매우 중요]\n- 같은 사건/발표/릴리즈를 다루는 기사가 여러 개면 가장 원본에 가까운 소스 1개만 선택\n- 우선순위: 공식 블로그/릴리즈 노트 > 전문 AI 매체 > 일반 테크 매체 > 뉴스 매체\n- 예: OpenAI 블로그 vs TechCrunch가 같은 뉴스를 다루면 OpenAI 블로그만 선택\n\n기사 목록:\n${articleList}\n\n반드시 아래 JSON 형식으로만 응답하세요. JSON 외의 텍스트는 절대 포함하지 마세요:\n{\n  \"selected\": [\n    { \"index\": 1, \"reason\": \"선택 이유 한 줄\" }\n  ]\n}\n\n최대 15개까지 선별하세요. 의미적으로 중복되는 기사는 반드시 1개만 남기세요.`;\n\nreturn [{ json: { prompt, articles } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1808,
+        176
+      ],
+      "id": "5125e8b2-1da5-4d46-8d81-9a02c2dfbab4",
+      "name": "1차 필터 프롬프트"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'openai/gpt-4.1-mini', messages: [{ role: 'system', content: 'AI 뉴스 필터링 전문가. 반드시 요청된 JSON 형식으로만 응답하라. JSON 외의 텍스트는 절대 포함하지 마라.' }, { role: 'user', content: $json.prompt }], temperature: 0.2, max_tokens: 2000 }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "9c509783-6c94-4208-8f2a-e65aca4b2fae",
+      "name": "1차 필터 LLM (GPT-4.1-mini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1504,
+        176
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cjRbZ8vwW17VCUpg",
+          "name": "Openrouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const llmResponse = $input.first().json.choices?.[0]?.message?.content || '';\n\n// JSON 파싱\nlet jsonStr = llmResponse;\nconst jsonMatch = llmResponse.match(/```json\\s*([\\s\\S]*?)\\s*```/);\nif (jsonMatch) jsonStr = jsonMatch[1];\nconst plainMatch = jsonStr.match(/```\\s*([\\s\\S]*?)\\s*```/);\nif (plainMatch) jsonStr = plainMatch[1];\n\nlet selected = [];\ntry {\n  const parsed = JSON.parse(jsonStr.trim());\n  selected = parsed.selected || [];\n} catch (e) {\n  // fallback: 숫자 추출\n  const matches = llmResponse.match(/\\d+/g) || [];\n  selected = matches.map(m => ({ index: parseInt(m, 10) }));\n}\n\n// 원본 기사 배열 가져오기\nconst articles = $('1차 필터 프롬프트').first().json.articles || [];\n\nconst results = [];\nfor (const item of selected) {\n  const idx = item.index - 1;\n  if (idx >= 0 && idx < articles.length) {\n    results.push({\n      json: {\n        ...articles[idx],\n        filter_reason: item.reason || ''\n      }\n    });\n  }\n}\n\nreturn results.length > 0\n  ? results.slice(0, 15)\n  : [{ json: { title: 'No articles selected', skip: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2672,
+        512
+      ],
+      "id": "3e4b20fa-f1c8-4ae0-b9f1-e219be28dd5e",
+      "name": "1차 필터 결과 파싱"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n\n  if (data.skip) {\n    results.push({ json: { skip: true } });\n    continue;\n  }\n\n  const prompt = `아래 AI 관련 기사에 대해 심층 조사를 해주세요.\n\n기사 제목: ${data.title}\n기사 링크: ${data.link}\n기사 출처: ${data.source}\n기사 스니펫: ${data.snippet}\n\n다음을 조사해서 반드시 JSON으로만 응답해주세요:\n{\n  \"official_source\": \"공식 블로그/릴리즈 노트/GitHub 등 1차 소스 URL (못 찾으면 null)\",\n  \"verified\": true 또는 false,\n  \"key_facts\": [\"핵심 사실 1\", \"핵심 사실 2\", \"핵심 사실 3\"],\n  \"corrections\": \"기사와 다른 점이 있으면 기술, 없으면 null\",\n  \"tech_details\": \"기술적 핵심 내용 요약 (3~5문장, 한국어)\",\n  \"significance\": \"왜 중요한지 한 줄 평가 (한국어)\",\n  \"related_tools\": [\"관련 도구/서비스명\"]\n}\n\nJSON 외의 텍스트는 절대 포함하지 마세요.`;\n\n  results.push({ json: { prompt, original: data } });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2400,
+        512
+      ],
+      "id": "ce92cb80-1ddd-417e-85ab-6452d28c09a7",
+      "name": "Perplexity 조사 프롬프트"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'perplexity/sonar', messages: [{ role: 'system', content: 'AI 기술 뉴스 팩트체커. 반드시 요청된 JSON 형식으로만 응답하라.' }, { role: 'user', content: $json.prompt }], temperature: 0.1, max_tokens: 2000 }) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "7490e40c-52ef-46cd-97ec-434544bc8411",
+      "name": "Perplexity Sonar 조사",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2112,
+        512
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cjRbZ8vwW17VCUpg",
+          "name": "Openrouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst originals = $('Perplexity 조사 프롬프트').all();\nconst results = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const response = items[i].json;\n  const original = originals[i]?.json?.original || {};\n\n  let content = '';\n  try {\n    content = response.choices[0].message.content;\n  } catch (e) {\n    results.push({ json: { ...original, research: null, research_error: 'LLM 응답 없음' } });\n    continue;\n  }\n\n  let jsonStr = content;\n  const jsonMatch = content.match(/```json\\s*([\\s\\S]*?)\\s*```/);\n  if (jsonMatch) jsonStr = jsonMatch[1];\n  const plainMatch = jsonStr.match(/```\\s*([\\s\\S]*?)\\s*```/);\n  if (plainMatch) jsonStr = plainMatch[1];\n\n  try {\n    const research = JSON.parse(jsonStr.trim());\n    results.push({ json: { ...original, research } });\n  } catch (e) {\n    results.push({ json: { ...original, research: null, research_error: content.slice(0, 500) } });\n  }\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1808,
+        512
+      ],
+      "id": "23746467-ba8c-4af1-8a36-8376c9af910b",
+      "name": "Perplexity 결과 병합"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(item => item.json);\nconst validItems = items.filter(i => !i.skip && i.title !== 'No articles selected');\nconst today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });\n\nconst articleList = validItems.map((a, i) => {\n  const r = a.research || {};\n  return `[${i+1}] 제목: ${a.title}\n  출처: ${a.source}\n  링크: ${a.link}\n  공식소스: ${r.official_source || 'N/A'}\n  검증여부: ${r.verified !== undefined ? r.verified : 'N/A'}\n  핵심사실: ${(r.key_facts || []).join(' / ')}\n  기술상세: ${r.tech_details || a.snippet}\n  중요도: ${r.significance || 'N/A'}\n  수정사항: ${r.corrections || '없음'}`;\n}).join('\\n\\n');\n\nconst prompt = `오늘은 ${today}입니다.\n당신은 AI 뉴스 큐레이터입니다. 아래는 팩트체크를 거친 기사 목록입니다.\n\n${articleList}\n\n[작업: 전체 요약/분류]\n모든 기사를 요약하고 분류하세요. 한 건도 빠뜨리지 마라.\n\n[요약 작성 규칙 - 매우 중요]\n- 요약은 반말로 작성. ~임, ~함, ~됨, ~옴 으로 끝내라\n- 요약은 \"그래서 이게 뭔데?\"가 한 문장으로 바로 이해되게 써라\n- 논문체, 보고서체 절대 금지\n- 추상적 표현 금지: \"~에 기여합니다\", \"~을 향상시킵니다\", \"~을 제공합니다\" 쓰지 마라\n- 대신 구체적으로: 뭘 만들었고, 뭐가 달라졌고, 뭘 할 수 있는지 직접적으로 써라\n\n[요약 예시]\n나쁜 예: \"propella-1은 소형 다국어 LLM으로 텍스트 문서를 18개 속성으로 어노테이션하며, LLM 프리트레이닝 데이터 품질 향상에 기여합니다.\"\n좋은 예: \"LLM 학습 데이터 품질을 자동으로 평가해주는 소형 모델 나옴. 57개 언어 지원하고 30억 개 문서 데이터셋도 같이 공개함.\"\n\n나쁜 예: \"Seedance 2.0은 텍스트, 이미지, 오디오, 비디오 입력을 통합 처리하는 멀티모달 AI 비디오 생성 모델입니다.\"\n좋은 예: \"텍스트만 넣으면 15초짜리 고품질 영상을 만들어주는 AI 나옴. 카메라 전환이랑 스테레오 오디오까지 자동으로 넣어줌.\"\n\n[핵심 사실 작성 규칙]\n- 각 항목은 구체적 숫자나 사실만 써라\n- 모호한 표현 금지: \"높은 일치도 달성\" → \"GPT-4 대비 정확도 95% 달성\"\n- 개발자가 읽고 바로 판단할 수 있는 정보만\n\n[기술 상세 작성 규칙]\n- 개발자가 바로 이해할 수 있게 써라\n- \"~을 도입했다\", \"~을 높인다\" 같은 논문체 금지\n- 대신 \"~방식으로 동작함\", \"~써서 ~가 가능함\" 같이 실용적으로\n\n[독자 레벨 분류 기준]\n- general: 일반인도 흥미를 가질만한 소식. ChatGPT, Claude, Midjourney, Suno, Kling 같은 누구나 쓸 수 있는 AI 서비스/도구의 신규 출시, 업데이트, 데모. 바이브코딩, 노코드 AI.\n- intermediate: AI에 관심 많고 n8n, Make 같은 자동화 도구를 활용하는 사람이 관심가질 소식.\n- developer: AI 엔지니어/개발자 대상. 새 모델 아키텍처, 학습 기법, 프레임워크, 벤치마크, 논문 등.\n\n반드시 아래 JSON 형식으로만 응답하세요:\n{\n  \"all_stories\": [\n    {\n      \"title\": \"기사 제목\",\n      \"summary\": \"한국어 1~2문장 요약 (반말, 구체적으로)\",\n      \"audience\": \"general | intermediate | developer\",\n      \"category\": \"model_release | tool_update | demo | paper | benchmark | api_change | opensource | creative_ai | automation | vibe_coding | other\",\n      \"link\": \"원문 링크\",\n      \"official_source\": \"공식 소스 링크\",\n      \"key_facts\": [\"구체적 사실들\"],\n      \"tech_details\": \"기술 상세 (실용적 표현으로)\"\n    }\n  ],\n  \"daily_digest\": \"오늘의 AI 뉴스 핵심 요약 (한국어, 반말, 3~5문장)\"\n}`;\n\nreturn [{ json: { prompt, articleCount: validItems.length, articles: validItems } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1504,
+        512
+      ],
+      "id": "285fd216-d4ef-49fd-b75e-fd3a9c0d0052",
+      "name": "2차 요약/분류 프롬프트"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'openai/gpt-4.1-mini', messages: [{ role: 'system', content: 'AI 뉴스 큐레이터. 반드시 요청된 JSON 형식으로만 응답하라.' }, { role: 'user', content: $json.prompt }], temperature: 0.3, max_tokens: 8000 }) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "980683c2-ad5b-4da4-9d0b-380c7a6163f4",
+      "name": "2차 요약 LLM (GPT-4.1-mini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1184,
+        512
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "cjRbZ8vwW17VCUpg",
+          "name": "Openrouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nlet content = '';\n\ntry {\n  content = response.choices[0].message.content;\n} catch (e) {\n  throw new Error('2차 LLM 응답 파싱 실패: ' + JSON.stringify(response).slice(0, 500));\n}\n\nlet jsonStr = content;\nconst jsonMatch = content.match(/```json\\s*([\\s\\S]*?)\\s*```/);\nif (jsonMatch) jsonStr = jsonMatch[1];\nconst plainMatch = jsonStr.match(/```\\s*([\\s\\S]*?)\\s*```/);\nif (plainMatch) jsonStr = plainMatch[1];\n\njsonStr = jsonStr.trim();\n\n// 1차 시도: 그대로 파싱\ntry {\n  const parsed = JSON.parse(jsonStr);\n  return [{ json: parsed }];\n} catch (e) {\n  // 2차 시도: 잘린 JSON 복구 - 닫히지 않은 괄호 닫기\n  let fixed = jsonStr;\n  \n  // 끝에 잘린 문자열 정리\n  const lastBrace = fixed.lastIndexOf('}');\n  const lastBracket = fixed.lastIndexOf(']');\n  const lastComplete = Math.max(lastBrace, lastBracket);\n  \n  if (lastComplete > 0) {\n    fixed = fixed.slice(0, lastComplete + 1);\n  }\n  \n  // 열린 괄호 카운트해서 부족한 만큼 닫기\n  const openBraces = (fixed.match(/{/g) || []).length;\n  const closeBraces = (fixed.match(/}/g) || []).length;\n  const openBrackets = (fixed.match(/\\[/g) || []).length;\n  const closeBrackets = (fixed.match(/\\]/g) || []).length;\n  \n  for (let i = 0; i < openBrackets - closeBrackets; i++) fixed += ']';\n  for (let i = 0; i < openBraces - closeBraces; i++) fixed += '}';\n  \n  try {\n    const parsed = JSON.parse(fixed);\n    return [{ json: parsed }];\n  } catch (e2) {\n    throw new Error('2차 JSON 파싱 실패. 원본: ' + content.slice(0, 1000));\n  }\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2672,
+        848
+      ],
+      "id": "c6bf877f-8b98-4055-b70b-ebb8e569afe9",
+      "name": "2차 요약 결과 파싱"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst allStories = data.all_stories || [];\n\nconst token = $env.SLACK_BOT_TOKEN;\nconst channel = 'C0AF0VCP7QA';\nconst headers = {\n  'Authorization': `Bearer ${token}`,\n  'Content-Type': 'application/json; charset=utf-8'\n};\n\n// 현재 한국 시간\nconst now = new Date();\nconst kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);\nconst dateStr = kst.toISOString().split('T')[0];\nconst hour = kst.getHours();\nconst timeLabel = `${hour}시`;\n\n// 1. 메인 메시지 전송\nconst mainRes = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://slack.com/api/chat.postMessage',\n  headers,\n  body: {\n    channel,\n    text: `${dateStr} ${timeLabel} AI 브리핑 (${allStories.length}건)`,\n    blocks: [\n      {\n        type: 'header',\n        text: { type: 'plain_text', text: `🤖 ${dateStr} ${timeLabel} AI 브리핑 (${allStories.length}건)` }\n      },\n      {\n        type: 'context',\n        elements: [{ type: 'mrkdwn', text: '각 항목은 스레드에서 확인' }]\n      }\n    ]\n  }\n});\nconst threadTs = mainRes.ts;\n\n// 2. 각 항목을 댓글로 전송\nconst categoryEmoji = {\n  model_release: '🚀', tool_update: '🔧', demo: '🎬', paper: '📄',\n  benchmark: '📊', api_change: '🔌', opensource: '💻', creative_ai: '🎨',\n  automation: '⚙️', vibe_coding: '🎸', other: '📌'\n};\n\nfor (let i = 0; i < allStories.length; i++) {\n  const s = allStories[i];\n  const emoji = categoryEmoji[s.category] || '📌';\n  const audience = s.audience || 'general';\n  const keyFacts = (s.key_facts || []).map(f => `- ${f}`).join('\\n');\n  const officialSource = s.official_source || s.link || '';\n\n  const text = `*[${i + 1}/${allStories.length}] ${emoji} ${s.title}*\\n\\n` +\n    `*카테고리:* ${s.category} | *타겟:* ${audience}\\n` +\n    `*요약:* ${s.summary}\\n\\n` +\n    (keyFacts ? `*핵심 사실:*\\n${keyFacts}\\n\\n` : '') +\n    (s.tech_details ? `*기술 상세:* ${s.tech_details}\\n\\n` : '') +\n    `📎 <${s.link}|원문 링크>` +\n    (officialSource && officialSource !== s.link ? ` | 🔗 <${officialSource}|공식 소스>` : '');\n\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'https://slack.com/api/chat.postMessage',\n    headers,\n    body: {\n      channel,\n      thread_ts: threadTs,\n      text\n    }\n  });\n}\n\nreturn [{ json: { ok: true, thread_ts: threadTs, count: allStories.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2400,
+        848
+      ],
+      "id": "f4aa363a-a61f-41fd-84e9-51374cf9fac4",
+      "name": "슬랙 브리핑 전송"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "f54ea521-e9d2-4435-a728-7291d531d2cd",
+      "name": "아침 8시 트리거",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2688,
+        176
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "RSS + Tavily 수집": {
+      "main": [
+        [
+          {
+            "node": "중복제거 & 24h 필터",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "중복제거 & 24h 필터": {
+      "main": [
+        [
+          {
+            "node": "1차 필터 프롬프트",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1차 필터 프롬프트": {
+      "main": [
+        [
+          {
+            "node": "1차 필터 LLM (GPT-4.1-mini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1차 필터 LLM (GPT-4.1-mini)": {
+      "main": [
+        [
+          {
+            "node": "1차 필터 결과 파싱",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1차 필터 결과 파싱": {
+      "main": [
+        [
+          {
+            "node": "Perplexity 조사 프롬프트",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity 조사 프롬프트": {
+      "main": [
+        [
+          {
+            "node": "Perplexity Sonar 조사",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity Sonar 조사": {
+      "main": [
+        [
+          {
+            "node": "Perplexity 결과 병합",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity 결과 병합": {
+      "main": [
+        [
+          {
+            "node": "2차 요약/분류 프롬프트",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2차 요약/분류 프롬프트": {
+      "main": [
+        [
+          {
+            "node": "2차 요약 LLM (GPT-4.1-mini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2차 요약 LLM (GPT-4.1-mini)": {
+      "main": [
+        [
+          {
+            "node": "2차 요약 결과 파싱",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2차 요약 결과 파싱": {
+      "main": [
+        [
+          {
+            "node": "슬랙 브리핑 전송",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "아침 8시 트리거": {
+      "main": [
+        [
+          {
+            "node": "RSS + Tavily 수집",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "409bd0b7-0b44-4f93-b126-d249e43884cb",
+  "meta": {
+    "instanceId": "0c3288e224de75130afd19773b995a1a0fc8cd4563214f0f726d1673c15abc08"
+  },
+  "id": "lGSUjCyDF0fwHjb9Razrd",
+  "tags": [
+    {
+      "updatedAt": "2026-02-08T05:34:48.492Z",
+      "createdAt": "2026-02-08T05:34:48.492Z",
+      "id": "3T79FebDQIwXjKkY",
+      "name": "ai-news"
+    },
+    {
+      "updatedAt": "2026-02-14T06:39:47.101Z",
+      "createdAt": "2026-02-14T06:39:47.101Z",
+      "id": "e4iuJHGSZfesqeZA",
+      "name": "threads-auto-publisher"
+    }
+  ]
+}
